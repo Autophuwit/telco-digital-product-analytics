@@ -38,6 +38,9 @@ def grid_y(ax):
     ax.grid(axis="y", color=GRID, lw=0.8); ax.set_axisbelow(True)
 
 # ---------------------------------------------------------------- 00 one-page report (Part 1)
+from matplotlib.patches import FancyBboxPatch
+
+PAGE, CARD, LINE = "#f4f3ef", "#ffffff", "#e1e0d9"
 MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan"]
 mau_po = [1.34, 1.28, 1.30, 1.06, 1.41, 1.40, 1.51, 1.49, 1.53, 1.54, 1.50, 1.43, 1.50]
 mau_pp = [3.51, 3.28, 3.62, 3.68, 3.70, 3.78, 4.13, 3.96, 4.03, 3.98, 4.05, 4.18, 4.33]
@@ -46,72 +49,112 @@ drv = {"DCB": [.061, .060, .061, .040, .066, .061, .065, .061, .065, .066, .064,
        "CPA": [.058, .054, .055, .053, .051, .052, .055, .056, .054, .054, .053, .050, .052],
        "OTT": [.0065, .0065, .0065, .0093, .0121, .0149, .0167, .0186, .0195, .0214, .0214, .0223, .0233],
        "Up2U": [.0037, .0037, .0047, .0047, .0056, .0056, .0065, .0065, .0065, .0056, .0047, .0047, .0037]}
-M = [f"M{i}" for i in range(1, 13)]
+M12 = [f"M{i}" for i in range(1, 13)]
 surv = {"po_dig": [1, .981, .918, .898, .880, .859, .850, .830, .844, .800, .784, .663],
         "po_non": [1, .986, .927, .909, .889, .871, .853, .834, .813, .797, .776, .653],
         "pp_dig": [1, .955, .882, .853, .828, .796, .776, .751, .720, .690, .664, .489],
         "pp_non": [1, .905, .819, .791, .754, .723, .692, .664, .637, .610, .583, .482]}
-gap_po = [("CPA", .02), ("DCB", .00), ("Up2U", -.05), ("OTT", -.07), ("Security", -.11), ("Game", -.16)]
-gap_pp = [("DCB", .10), ("Up2U", .05), ("CPA", .04), ("Game", .01), ("Security", -.03), ("OTT", -.09)]
+gap_po = {"CPA": .02, "DCB": .00, "Up2U": -.05, "Game": -.16, "Security": -.11, "OTT": -.07}
+gap_pp = {"CPA": .04, "DCB": .10, "Up2U": .05, "Game": .01, "Security": -.03, "OTT": -.09}
 
-fig = plt.figure(figsize=(16, 9.2))
-gs = fig.add_gridspec(2, 3, hspace=0.55, wspace=0.28, left=0.05, right=0.98, top=0.86, bottom=0.07)
-fig.text(0.05, 0.955, "Digital Product Performance", fontsize=22, fontweight="bold", color=INK)
-fig.text(0.05, 0.915, "Monthly management report  |  recreated for portfolio with rescaled data  |  13 months",
-         fontsize=11.5, color=INK2)
+fig = plt.figure(figsize=(16, 10.2), facecolor=PAGE)
 
-def panel(ax, t):
-    ax.set_title(t, loc="left", fontsize=12.5, fontweight="bold", color=INK, pad=10)
+def card(x, y, w, h):
+    fig.patches.append(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=0.008",
+                                      transform=fig.transFigure, fc=CARD, ec=LINE, lw=1.1, zorder=-10))
 
-ax = fig.add_subplot(gs[0, 0]); panel(ax, "Digital product MAU (M) and % of base")
-ax.bar(range(13), mau_po, color=VIOLET, width=0.7, label="Postpaid", edgecolor=SURF, linewidth=1.5, zorder=2)
-ax.bar(range(13), mau_pp, bottom=mau_po, color=AQUA, width=0.7, label="Prepaid", edgecolor=SURF, linewidth=1.5, zorder=2)
+def styled(ax):
+    ax.set_facecolor(CARD)
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color(AXIS)
+    ax.tick_params(axis="both", labelsize=9, length=0, colors=MUTED)
+    ax.grid(axis="y", color="#ecebe6", lw=0.8); ax.set_axisbelow(True)
+
+# header
+fig.text(0.03, 0.952, "Digital Product Performance", fontsize=25, fontweight="bold", color=INK)
+fig.text(0.03, 0.918, "Monthly management report  ·  digital users vs non-digital users  ·  13-month view", fontsize=12, color=INK2)
+fig.text(0.97, 0.952, "Portfolio recreation  ·  rescaled data", fontsize=10, color=MUTED, ha="right")
+
+# KPI tiles
+kpis = [("Digital product MAU", "5.8M", "+20% YoY", AQUA),
+        ("Share of base using digital", "13%", "+3pp YoY", AQUA),
+        ("ARPU uplift after adoption", "+10% | +29%", "Postpaid | Prepaid", AQUA),
+        ("OTT 12-month survival vs non-digital", "-7pp | -9pp", "Postpaid | Prepaid", ORANGE)]
+tw = (0.94 - 3 * 0.015) / 4
+for i, (lab, val, sub, c) in enumerate(kpis):
+    x = 0.03 + i * (tw + 0.015); y = 0.775; h = 0.115
+    card(x, y, tw, h)
+    fig.patches.append(plt.Rectangle((x, y + 0.012), 0.004, h - 0.024, transform=fig.transFigure, fc=c, ec="none", zorder=-5))
+    fig.text(x + 0.018, y + h - 0.03, lab.upper(), fontsize=9, color=MUTED, fontweight="bold")
+    fig.text(x + 0.018, y + 0.040, val, fontsize=24, fontweight="bold", color=ORANGE if c == ORANGE else INK)
+    fig.text(x + 0.018, y + 0.014, sub, fontsize=10, color=INK2)
+
+# panel grid
+pw = (0.94 - 2 * 0.015) / 3; ph = 0.335
+slots = [(0.03 + c * (pw + 0.015), 0.405 if r == 0 else 0.045) for r in range(2) for c in range(3)]
+
+def panel(i, t, takeaway):
+    x, y = slots[i]
+    card(x, y, pw, ph)
+    fig.text(x + 0.016, y + ph - 0.034, t, fontsize=13, fontweight="bold", color=INK)
+    fig.text(x + 0.016, y + ph - 0.06, takeaway, fontsize=10, color=INK2)
+    ax = fig.add_axes([x + 0.042, y + 0.045, pw - 0.06, ph - 0.125], zorder=5)
+    styled(ax)
+    return ax
+
+ax = panel(0, "Digital product MAU", "Prepaid drives ~3/4 of digital users")
+ax.bar(range(13), mau_po, color=VIOLET, width=0.68, label="Postpaid", zorder=2)
+ax.bar(range(13), mau_pp, bottom=mau_po, color=AQUA, width=0.68, label="Prepaid", zorder=2)
 for i in (0, 12):
-    tot = mau_po[i] + mau_pp[i]
-    ax.text(i, tot + 0.12, f"{tot:.1f}M\n{dig_pct[i]:.0%}", ha="center", fontsize=9.5, color=INK2)
-ax.set_xticks(range(13), MON, fontsize=8.5); ax.set_ylim(0, 6.9); grid_y(ax)
-ax.legend(frameon=False, fontsize=9, loc="upper center", ncol=2)
+    ax.text(i, mau_po[i] + mau_pp[i] + 0.15, f"{mau_po[i]+mau_pp[i]:.1f}M", ha="center", fontsize=9.5, color=INK, fontweight="bold")
+ax.set_xticks(range(13), MON); ax.set_ylim(0, 7); ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0f}M"))
+ax.legend(frameon=False, fontsize=9, loc="upper left", ncol=2, handlelength=1, borderaxespad=0)
 
-ax = fig.add_subplot(gs[0, 1]); panel(ax, "Service drivers - Postpaid adoption")
-for (k, ys), c, mk in zip(drv.items(), [YELLOW, VIOLET, AQUA, MAGENTA], ["o", "s", "D", "^"]):
-    ax.plot(range(13), ys, color=c, lw=2, marker=mk, ms=4.5, label=k)
-    ax.text(12.3, ys[-1], k, fontsize=9, color=INK2, va="center")
-ax.set_xticks(range(13), MON, fontsize=8.5); ax.set_xlim(-0.4, 14)
-ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0)); grid_y(ax)
+ax = panel(1, "Postpaid adoption by product", "OTT is the fastest-growing product (x3.5)")
+for (k, ys), c in zip(drv.items(), [YELLOW, VIOLET, ORANGE, MAGENTA]):
+    lw = 2.8 if k == "OTT" else 1.8
+    ax.plot(range(13), ys, color=c, lw=lw, marker="o", ms=3.5 if k != "OTT" else 5, zorder=3 if k == "OTT" else 2)
+    ax.text(12.4, ys[-1], k, fontsize=9.5, color=c if k == "OTT" else INK2, va="center", fontweight="bold" if k == "OTT" else "normal")
+ax.set_xticks(range(13), MON); ax.set_xlim(-0.4, 14.2); ax.set_ylim(0, 0.075)
+ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
 
-ax = fig.add_subplot(gs[0, 2]); panel(ax, "ARPU uplift after first adoption")
-cats = ["Add 1 product", "Add 2", "Add 3"]; po = [.08, .23, .52]; pp = [.29, .36, 1.14]
+ax = panel(2, "ARPU uplift by products added", "More digital products, bigger uplift")
+cats = ["+1 product", "+2 products", "+3 products"]; po = [.08, .23, .52]; pp = [.29, .36, 1.14]
 x = range(3); w = 0.36
-b1 = ax.bar([i - w / 2 for i in x], po, w, color=VIOLET, label="Postpaid (non-digital: +1%)", edgecolor=SURF, linewidth=1.5, zorder=2)
-b2 = ax.bar([i + w / 2 for i in x], pp, w, color=AQUA, label="Prepaid (non-digital: -9%)", edgecolor=SURF, linewidth=1.5, zorder=2)
+b1 = ax.bar([i - w / 2 for i in x], po, w, color=VIOLET, label="Postpaid", zorder=2)
+b2 = ax.bar([i + w / 2 for i in x], pp, w, color=AQUA, label="Prepaid", zorder=2)
 for bars in (b1, b2):
     for b in bars:
-        ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.02, f"+{b.get_height():.0%}", ha="center", fontsize=9, color=INK2)
-ax.set_xticks(list(x), cats, fontsize=9.5); ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
-ax.set_ylim(0, 1.35); grid_y(ax); ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+        ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.03, f"+{b.get_height():.0%}", ha="center", fontsize=9, color=INK2)
+ax.set_xticks(list(x), cats); ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0)); ax.set_ylim(0, 1.32)
+ax.legend(frameon=False, fontsize=9, loc="upper left", handlelength=1, borderaxespad=0)
 
-for col, seg in [(0, "po"), (1, "pp")]:
-    ax = fig.add_subplot(gs[1, col]); panel(ax, f"12-month survival - {'Postpaid' if seg == 'po' else 'Prepaid'}")
-    ax.plot(M, surv[f"{seg}_non"], color=GRAY, lw=2, marker="o", ms=4, label="Non-digital user")
-    ax.plot(M, surv[f"{seg}_dig"], color=BLUE, lw=2, marker="o", ms=4, label="Digital user")
-    ax.text(11.3, surv[f"{seg}_dig"][-1] + 0.02, f"{surv[f'{seg}_dig'][-1]:.0%}", fontsize=9, color=BLUE)
-    ax.text(11.3, surv[f"{seg}_non"][-1] - 0.05, f"{surv[f'{seg}_non'][-1]:.0%}", fontsize=9, color=INK2)
-    ax.set_xlim(-0.4, 12.2); ax.set_ylim(0.4, 1.03); ax.tick_params(axis="x", labelsize=8.5)
-    ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0)); grid_y(ax)
-    ax.legend(frameon=False, fontsize=9, loc="lower left")
+for idx, seg, take in [(3, "po", "Digital and non-digital retain about the same"), (4, "pp", "Digital users retain slightly better")]:
+    ax = panel(idx, f"12-month survival · {'Postpaid' if seg == 'po' else 'Prepaid'}", take)
+    d, n = surv[f"{seg}_dig"], surv[f"{seg}_non"]
+    ax.fill_between(range(12), d, n, color=BLUE, alpha=0.08, lw=0)
+    ax.plot(range(12), n, color=GRAY, lw=2, label="Non-digital")
+    ax.plot(range(12), d, color=BLUE, lw=2.4, label="Digital")
+    ax.text(11.25, d[-1] + 0.025, f"{d[-1]:.0%}", fontsize=9.5, color=BLUE, fontweight="bold")
+    ax.text(11.25, n[-1] - 0.045, f"{n[-1]:.0%}", fontsize=9.5, color=INK2)
+    ax.set_xticks(range(12), M12); ax.set_xlim(-0.3, 12.2); ax.set_ylim(0.4, 1.04)
+    ax.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
+    ax.legend(frameon=False, fontsize=9, loc="lower left", handlelength=1.5, borderaxespad=0)
 
-ax = fig.add_subplot(gs[1, 2]); panel(ax, "12-month survival vs non-digital, by product")
-prods = ["CPA", "DCB", "Up2U", "Game", "Security", "OTT"]
-dpo = dict(gap_po); dpp = dict(gap_pp); y = range(len(prods))[::-1]; h = 0.36
-ax.barh([i + h / 2 for i in y], [dpo[p] for p in prods], h, color=VIOLET, label="Postpaid", zorder=2)
-ax.barh([i - h / 2 for i in y], [dpp[p] for p in prods], h, color=AQUA, label="Prepaid", zorder=2)
+ax = panel(5, "Survival gap vs non-digital, by product", "OTT is the only product negative in both segments")
+prods = ["CPA", "DCB", "Up2U", "Game", "Security", "OTT"]; ys = list(range(len(prods)))[::-1]; h = 0.36
+ax.axhspan(-0.5, 0.5, color="#fdebe3", zorder=0)
+ax.barh([i + h / 2 for i in ys], [gap_po[p] for p in prods], h, color=VIOLET, label="Postpaid", zorder=2)
+ax.barh([i - h / 2 for i in ys], [gap_pp[p] for p in prods], h, color=AQUA, label="Prepaid", zorder=2)
 ax.axvline(0, color=AXIS, lw=1)
-ax.set_yticks(list(y), prods); ax.tick_params(axis="y", length=0)
+ax.set_yticks(ys, prods); ax.get_yticklabels()[-1].set_color(ORANGE); ax.get_yticklabels()[-1].set_fontweight("bold")
+ax.grid(axis="y", visible=False); ax.grid(axis="x", color="#ecebe6", lw=0.8)
 ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v*100:+.0f}pp" if v else "0"))
-ax.set_xlim(-0.19, 0.13); ax.grid(axis="x", color=GRID, lw=0.8); ax.set_axisbelow(True)
-ax.text(-0.18, 0 - 0.05, "OTT is negative\nin both segments", fontsize=9, color=ORANGE, fontweight="bold", va="center")
-ax.legend(frameon=False, fontsize=9, loc="upper left")
-fig.savefig(os.path.join(OUT, "00_digital_product_report.png"), dpi=170)
+ax.set_xlim(-0.19, 0.13); ax.set_ylim(-0.6, 5.6)
+ax.legend(frameon=False, fontsize=9, loc="upper left", handlelength=1, borderaxespad=0)
+
+fig.savefig(os.path.join(OUT, "00_digital_product_report.png"), dpi=160, facecolor=PAGE)
 plt.close(fig)
 
 # ---------------------------------------------------------------- Part 2 charts
