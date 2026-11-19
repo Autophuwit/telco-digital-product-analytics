@@ -13,7 +13,7 @@
      D. Nulls                             (segment fields filled)
      E. Month-over-month drift            (active base, revenue, digital share vs last month)
      F. Survival table                    (cohort size = profile, caller <= active)
-        - using 02 v2: replace AUTO_LIFESTYLE_SUB_SEGMENT_SURVIVAL_ACTIVE_CALLER with the view ..._V in F1 / F2
+        - reads the 02 v2 view ..._V; for legacy v1 use the table AUTO_LIFESTYLE_SUB_SEGMENT_SURVIVAL_ACTIVE_CALLER in F1 / F2
    ============================================================ */
 
 
@@ -218,7 +218,7 @@ SELECT
 	  'F1', 'Survival cohort (M01) size = profile subscribers'
 	, S.N, P.N
 	, CASE WHEN S.N = P.N THEN 'PASS' ELSE 'FAIL' END
-FROM       (SELECT COUNT(DISTINCT PROD_KEY) AS N FROM SANDBOX.AUTO_LIFESTYLE_SUB_SEGMENT_SURVIVAL_ACTIVE_CALLER WHERE MNTH_ID IN (SELECT MNTH_ID FROM TEMP_DQ_DATE)) S
+FROM       (SELECT COUNT(DISTINCT PROD_KEY) AS N FROM SANDBOX.AUTO_LIFESTYLE_SUB_SEGMENT_SURVIVAL_ACTIVE_CALLER_V WHERE MNTH_ID IN (SELECT MNTH_ID FROM TEMP_DQ_DATE)) S
 CROSS JOIN (SELECT COUNT(DISTINCT PROD_KEY) AS N FROM SANDBOX.AUTO_SUB_PROFILE_MTH                         WHERE MNTH_ID IN (SELECT MNTH_ID FROM TEMP_DQ_DATE)) P
 
 UNION ALL
@@ -227,7 +227,7 @@ SELECT
 	  'F2', 'Survival rows with ACTIVE_CALLER = 1 but ACTIVE = 0'
 	, COUNT(*), 0
 	, CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM SANDBOX.AUTO_LIFESTYLE_SUB_SEGMENT_SURVIVAL_ACTIVE_CALLER
+FROM SANDBOX.AUTO_LIFESTYLE_SUB_SEGMENT_SURVIVAL_ACTIVE_CALLER_V
 WHERE MNTH_ID BETWEEN CAST(TO_CHAR(ADD_MONTHS(TO_DATE(CAST(:RUN_MNTH AS VARCHAR(6)), 'YYYYMM'), -11), 'YYYYMM') AS INT) AND :RUN_MNTH
 	AND (   (ACTIVE_CALLER_M01 = 1 AND ACTIVE_M01 = 0)
 	     OR (ACTIVE_CALLER_M06 = 1 AND ACTIVE_M06 = 0)

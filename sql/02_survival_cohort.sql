@@ -1,4 +1,10 @@
 /* ============================================================
+   LEGACY - kept to show the original wide-table version.
+   The maintained version is 02_survival_cohort_v2.sql (long table + pivot view).
+   Run in the same vsql session right after 01, same RUN_MNTH (it reads 01's temp tables)
+   ============================================================ */
+
+/* ============================================================
    0.1 CREATE RUN DATE
    ============================================================ */
 -- Create Calendar and max date
@@ -10,7 +16,7 @@ SELECT
 	 GREG_MTH_ID AS MNTH_ID 
 	,MAX(GREG_DT_DT) AS MAX_RUN_DATE 
 FROM EDW.DTN_GEOG_CLDR 
-WHERE GREG_MTH_ID = 202511   -- 1) CHANGE MNTH_ID HERE
+WHERE GREG_MTH_ID = :RUN_MNTH   -- passed in: vsql -v RUN_MNTH=yyyymm
 GROUP BY 1
 ORDER BY GREG_MTH_ID 
 )
@@ -138,7 +144,8 @@ SEGMENTED BY HASH(MNTH_ID, PROD_KEY) ALL NODES
    10. LOAD GUARD - CHECK BEFORE WRITING THE MONTH
    ============================================================ */ 
 -- LOAD_OK = 1 only if the month's profile is loaded (by 01) and the survival input covers it
--- LOAD_OK = 0 -> step 11 deletes, inserts and updates nothing; the survival table is left as it was
+-- LOAD_OK = 0 -> the assert below raises "Division by zero" and the script stops (ON_ERROR_STOP);
+--               the WHERE EXISTS in step 11 is a second line of defence if it is run without ON_ERROR_STOP
 DROP TABLE IF EXISTS TEMP_LOAD_GUARD_SURV;
 
 CREATE LOCAL TEMP TABLE TEMP_LOAD_GUARD_SURV ON COMMIT PRESERVE ROWS AS
@@ -165,6 +172,9 @@ SEGMENTED BY HASH(MNTH_ID) ALL NODES
 
 -- CHECK: LOAD_OK MUST BE 1 BEFORE CONTINUING
 SELECT * FROM TEMP_LOAD_GUARD_SURV;
+
+-- ASSERT: fails the run (1 / 0) when LOAD_OK = 0, so the scheduler sees an error instead of a silent skip
+SELECT 1 / COALESCE(MAX(LOAD_OK), 0) AS LOAD_GUARD_PASSED FROM TEMP_LOAD_GUARD_SURV;
 
 /* ============================================================
    11. UPDATE EXISTING SURVIVAL TABLE 

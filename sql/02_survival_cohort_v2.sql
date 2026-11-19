@@ -1,7 +1,11 @@
 /* ============================================================
    02 v2 - ROLLING 12-MONTH SURVIVAL (LONG FORMAT)
    ------------------------------------------------------------
-   Same result as 02_survival_cohort.sql, rewritten to be easier to run and maintain:
+   The maintained version of 02_survival_cohort.sql (v1 is kept as legacy).
+   Same logic and output layout as v1 with one fix: v1 SUMs revenue over every profile row,
+   so a PROD_KEY duplicated in the profile is counted twice - v2 takes it once (MAX).
+   02_v1_vs_v2_reconcile.sql is the parallel-run check that every other value matches.
+   Rewritten to be easier to run and maintain:
      - the run month is a parameter, set once        -> no "CHANGE MNTH_ID HERE" edits
      - one INSERT per run (one row per cohort member x month number)
        instead of 1 INSERT + 11 UPDATE blocks         -> adding M13..M24 needs no new code
@@ -27,7 +31,8 @@ CREATE TABLE IF NOT EXISTS SANDBOX.AUTO_LIFESTYLE_SUB_SURVIVAL_LONG
     , ACTIVE            INT
     , REVN_AMNT         NUMERIC(18,6)
     , ACTIVE_DIGITAL    INT
-    , ACTIVE_CHURN      INT
+    , ACTIVE_CHURN      INT            -- always 0, kept so the _V layout matches the v1 wide table;
+                                       -- churn is read as ACTIVE = 1 -> 0 in a later month
     , ACTIVE_CALLER     INT
 )
 ORDER BY COHORT_MNTH_ID, PROD_KEY
@@ -158,7 +163,7 @@ SELECT
 	, 1                                                       AS ACTIVE
 	, COALESCE(MAX(REV.REVN_AMNT), 0)                         AS REVN_AMNT
 	, MAX(CASE WHEN DIGI.TOTAL_DIGIT = 1 THEN 1 ELSE 0 END)   AS ACTIVE_DIGITAL
-	, 0                                                       AS ACTIVE_CHURN
+	, 0                                                       AS ACTIVE_CHURN   -- not populated (see table DDL)
 	, MAX(CASE WHEN KPI.PROD_KEY IS NOT NULL THEN 1 ELSE 0 END) AS ACTIVE_CALLER
 FROM SANDBOX.AUTO_SUB_PROFILE_MTH PRO
 LEFT JOIN SANDBOX.AUTO_LIFESTYLE_SUB_AGG_REVENUE_MTH REV
@@ -181,6 +186,8 @@ SEGMENTED BY HASH(PROD_KEY) ALL NODES
    3. LOAD GUARD
    ============================================================ */
 -- LOAD_OK = 1 only if the run month's profile is loaded and not much smaller than last month
+-- LOAD_OK = 0 -> the assert below raises "Division by zero" and the script stops (ON_ERROR_STOP);
+--               the WHERE EXISTS in step 4 is a second line of defence if it is run without ON_ERROR_STOP
 DROP TABLE IF EXISTS TEMP_LOAD_GUARD_SURV;
 
 CREATE LOCAL TEMP TABLE TEMP_LOAD_GUARD_SURV ON COMMIT PRESERVE ROWS AS
@@ -208,6 +215,9 @@ SEGMENTED BY HASH(MNTH_ID) ALL NODES
 
 -- CHECK: LOAD_OK MUST BE 1 BEFORE CONTINUING
 SELECT * FROM TEMP_LOAD_GUARD_SURV;
+
+-- ASSERT: fails the run (1 / 0) when LOAD_OK = 0, so the scheduler sees an error instead of a silent skip
+SELECT 1 / COALESCE(MAX(LOAD_OK), 0) AS LOAD_GUARD_PASSED FROM TEMP_LOAD_GUARD_SURV;
 
 
 /* ============================================================

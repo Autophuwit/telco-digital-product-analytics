@@ -1,4 +1,9 @@
 /* ============================================================
+   Run (vsql):   vsql -v RUN_MNTH=202511 -v ON_ERROR_STOP=on -f 01_profile_flag_segment.sql
+   ON_ERROR_STOP matters: the load guard in step 8 stops the script on a bad load
+   ============================================================ */
+
+/* ============================================================
    0.1 CREATE RUN DATE
    ============================================================ */
 -- Create Calendar and max date
@@ -10,7 +15,7 @@ SELECT
 	 GREG_MTH_ID AS MNTH_ID 
 	,MAX(GREG_DT_DT) AS MAX_RUN_DATE 
 FROM EDW.DTN_GEOG_CLDR 
-WHERE GREG_MTH_ID = 202511   -- 1) CHANGE MNTH_ID HERE
+WHERE GREG_MTH_ID = :RUN_MNTH   -- passed in: vsql -v RUN_MNTH=yyyymm
 GROUP BY 1
 ORDER BY GREG_MTH_ID 
 )
@@ -165,7 +170,7 @@ SELECT DISTINCT
 	  CUST_ACCT_KEY
 	, ACCT_TYP
 FROM EDW.DIM_ACCT
-WHERE VC_PAR_KEY = DATE '2025-12-22' -- 2) CHANGE DATE HERE
+WHERE VC_PAR_KEY = (SELECT MAX(VC_PAR_KEY) FROM EDW.DIM_ACCT) -- latest account snapshot (was a hand-picked date)
 )
 SEGMENTED BY HASH(CUST_ACCT_KEY) ALL NODES
 ;
@@ -606,7 +611,8 @@ SEGMENTED BY HASH(MNTH_ID, PROD_KEY) ALL NODES
    ============================================================ */
 -- LOAD_OK = 1 only if the new month looks complete:
 --   profile not empty, >= 90% of last month's subscribers, every subscriber has a flag row, revenue loaded
--- LOAD_OK = 0 -> step 9 deletes and inserts nothing, the month already loaded is kept
+-- LOAD_OK = 0 -> the assert below raises "Division by zero" and the script stops (ON_ERROR_STOP);
+--               the WHERE EXISTS in step 9 is a second line of defence if it is run without ON_ERROR_STOP
 DROP TABLE IF EXISTS TEMP_LOAD_GUARD;
 
 CREATE LOCAL TEMP TABLE TEMP_LOAD_GUARD ON COMMIT PRESERVE ROWS AS
@@ -639,6 +645,9 @@ SEGMENTED BY HASH(MNTH_ID) ALL NODES
 
 -- CHECK: LOAD_OK MUST BE 1 BEFORE CONTINUING
 SELECT * FROM TEMP_LOAD_GUARD;
+
+-- ASSERT: fails the run (1 / 0) when LOAD_OK = 0, so the scheduler sees an error instead of a silent skip
+SELECT 1 / COALESCE(MAX(LOAD_OK), 0) AS LOAD_GUARD_PASSED FROM TEMP_LOAD_GUARD;
 
 
 /* ============================================================
