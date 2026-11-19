@@ -170,7 +170,10 @@ SELECT DISTINCT
 	  CUST_ACCT_KEY
 	, ACCT_TYP
 FROM EDW.DIM_ACCT
-WHERE VC_PAR_KEY = (SELECT MAX(VC_PAR_KEY) FROM EDW.DIM_ACCT) -- latest account snapshot (was a hand-picked date)
+-- first account snapshot on or after the run month's last day (was a hand-picked date):
+-- tied to RUN_MNTH, so re-running an old month reads the same snapshot; no snapshot -> load guard step 8
+WHERE VC_PAR_KEY = (SELECT MIN(VC_PAR_KEY) FROM EDW.DIM_ACCT
+                    WHERE VC_PAR_KEY >= (SELECT MAX_RUN_DATE FROM TEMP_DATE))
 )
 SEGMENTED BY HASH(CUST_ACCT_KEY) ALL NODES
 ;
@@ -610,7 +613,8 @@ SEGMENTED BY HASH(MNTH_ID, PROD_KEY) ALL NODES
    8. LOAD GUARD - CHECK BEFORE REPLACING THE MONTH
    ============================================================ */
 -- LOAD_OK = 1 only if the new month looks complete:
---   profile not empty, >= 90% of last month's subscribers, every subscriber has a flag row, revenue loaded
+--   profile not empty, >= 90% of last month's subscribers, every subscriber has a flag row, revenue loaded,
+--   account snapshot found (the profile LEFT JOINs it, so a missing snapshot would only show as NULL account types)
 -- LOAD_OK = 0 -> the assert below raises "Division by zero" and the script stops (ON_ERROR_STOP);
 --               the WHERE EXISTS in step 9 is a second line of defence if it is run without ON_ERROR_STOP
 DROP TABLE IF EXISTS TEMP_LOAD_GUARD;
@@ -623,17 +627,20 @@ SELECT
 	, P.NSUBR_PREV
 	, F.NSUBR_FLAG
 	, R.NSUBR_REVN
+	, A.NACCT
 	, CASE
 		WHEN N.NSUBR_NEW = 0                                       THEN 0  -- source empty
 		WHEN P.NSUBR_PREV > 0 AND N.NSUBR_NEW < P.NSUBR_PREV * 0.9 THEN 0  -- dropped > 10% vs last month
 		WHEN F.NSUBR_FLAG <> N.NSUBR_NEW                           THEN 0  -- flag segment incomplete
 		WHEN R.NSUBR_REVN = 0                                      THEN 0  -- revenue not loaded
+		WHEN A.NACCT = 0                                           THEN 0  -- no account snapshot for the month
 		ELSE 1
 	  END AS LOAD_OK
 FROM TEMP_DATE D
 CROSS JOIN (SELECT COUNT(DISTINCT PROD_KEY) AS NSUBR_NEW  FROM TEMP_SUB_PROFILE_MTH)              N
 CROSS JOIN (SELECT COUNT(DISTINCT PROD_KEY) AS NSUBR_FLAG FROM TEMP_SUB_FLAG_SEGMENT_EXTENDED_AOU) F
 CROSS JOIN (SELECT COUNT(DISTINCT PROD_KEY) AS NSUBR_REVN FROM TEMP_SUB_REVN_AGGREGATE)           R
+CROSS JOIN (SELECT COUNT(*)                 AS NACCT      FROM TEMP_SUB_DIM_ACCT)                 A
 CROSS JOIN (
 	SELECT COUNT(DISTINCT PROD_KEY) AS NSUBR_PREV
 	FROM SANDBOX.AUTO_SUB_PROFILE_MTH
