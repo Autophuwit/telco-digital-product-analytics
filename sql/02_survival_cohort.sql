@@ -1,7 +1,6 @@
 /* ============================================================
-   LEGACY - kept to show the original wide-table version.
-   The maintained version is 02_survival_cohort_v2.sql (long table + pivot view).
    Run in the same vsql session right after 01, same RUN_MNTH (it reads 01's temp tables)
+       vsql -v RUN_MNTH=202511 -v ON_ERROR_STOP=on -f 02_survival_cohort.sql
    ============================================================ */
 
 /* ============================================================
