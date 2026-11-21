@@ -144,24 +144,28 @@ flowchart LR
 |---|---|
 | [`sql/01_profile_flag_segment.sql`](sql/01_profile_flag_segment.sql) | Pre-validation checks on every source table. Builds the monthly subscriber profile (excluding silent/test lines; tourist/migrant/mass SIM typing). Harmonizes prepaid (VAT-excluded usage) and postpaid (invoice) revenue. Flags 6 digital products from both main packages and toppings. Adds tenure bands. Replaces the month in the permanent tables behind a load guard. |
 | [`sql/02_survival_cohort.sql`](sql/02_survival_cohort.sql) | Incremental monthly load of a rolling 12-month cohort matrix: inserts the new cohort, then back-fills M02–M12 for the previous 11 cohorts (active, active-caller, digital, revenue). |
-| [`sql/dq_checks.sql`](sql/dq_checks.sql) | 14 data-quality checks for a month, each returning PASS / FAIL: source → target reconciliation, duplicate keys, completeness, nulls, month-over-month drift, survival-table consistency. |
+| [`sql/dq_checks.sql`](sql/dq_checks.sql) | Post-validation: 14 data-quality checks for a month, each returning PASS / FAIL: source → target reconciliation, duplicate keys, completeness, nulls, month-over-month drift, survival-table consistency. |
 | [`sql/03_monthly_report_export.sql`](sql/03_monthly_report_export.sql) | Report layer: MAU and product mix, service drivers, ARPU-uplift movement (product count month-over-month), and cohort-weighted survival curves that use only cohorts with complete follow-up at each horizon. |
 | [`sql/04_first_ott_churn_deep_dive.sql`](sql/04_first_ott_churn_deep_dive.sql) | Builds the first-OTT cohort and loads Netezza extracts back into Vertica. Attributes channel/dealer/agent with an effective-dated partner dimension join. Computes ARPU before/after with fallback rules for missing months. Adds uplift-type and retention flags, scores sellers, and runs ~40 driver cuts. |
 
 **Techniques used:** MPP table design (`SEGMENTED BY HASH`, `DISTRIBUTE ON`), session temp tables, window functions (`ROW_NUMBER` de-duplication, first-event detection), SCD-style effective-date joins, incremental cohort back-fill, cross-platform extract/load (Netezza external tables), data-quality pre-checks, survival/retention metrics with censoring-aware denominators.
 
-### Production safety
+### Pre-validation (before the load)
 
-The monthly loads write into permanent tables that the report reads, so a bad run must never wipe or duplicate a month.
+Step 0.2 of [`sql/01_profile_flag_segment.sql`](sql/01_profile_flag_segment.sql) profiles every source table before the profile is built:
 
-| Risk | How the scripts handle it |
+| Source | What is checked |
 |---|---|
-| **Re-running a month** (fix, late data) | Each load deletes the run month before inserting it, in one transaction — re-running gives the same result instead of duplicate rows. |
-| **Empty or partial source** | A `TEMP_LOAD_GUARD` table is computed first: new month not empty, ≥ 90% of last month's subscribers, every subscriber has a flag row, revenue loaded. If `LOAD_OK = 0`, `SELECT 1 / LOAD_OK` raises an error and the script stops (`vsql -v ON_ERROR_STOP=on`), so the scheduler sees a failed run instead of a silent skip. The `DELETE` and `INSERT` also carry `WHERE LOAD_OK = 1`, so the loaded month stays untouched even if the client does not stop on errors. |
-| **Back-fill of older cohorts** (02) | The 11 `UPDATE` blocks carry the same guard, so a missing input never overwrites M02–M12 with zeros. |
-| **Hard-coded run month** | 01 and 02 take the month as `vsql -v RUN_MNTH=yyyymm`; the account snapshot is the first one on or after the month's last day instead of a hand-typed date, so re-running an old month reads the same snapshot (and the load guard fails if that snapshot is gone). (04 is a one-off study with a fixed Dec-24 → Apr-25 window.) |
+| `DIM_PROD_KPI` | Rows per daily snapshot in the run month: the month-end snapshot is there |
+| `DIM_ACCT`, `DIM_PROD_MOL` | Rows per snapshot date, latest first: the snapshot the profile needs is there |
+| `AGG_PREP_REV_SUBS_DAY` | Prepaid revenue per month for the run month and the 5 months before, and rows per call month |
+| `FCT_INVC_PROD` | Postpaid invoice revenue per month, same 6-month window |
+| `FCT_VAS_CONTENT` | Postpaid topping purchases per month, same window |
+| `FCT_REV_SHARING` | DCB / CPA rows per month, same window |
 
-### Data quality
+These queries print counts only (no pass / fail). A missing snapshot date, a month with far fewer rows, or revenue well below the 6-month trend shows that a source is late or partial.
+
+### Post-validation (after the load)
 
 [`sql/dq_checks.sql`](sql/dq_checks.sql) runs after the load for the same month and returns one PASS / FAIL row per check plus an *OK TO PUBLISH / HOLD* summary:
 
@@ -175,22 +179,6 @@ The monthly loads write into permanent tables that the report reads, so a bad ru
 | **Survival** | New cohort size = profile subscribers; no active caller that is not active |
 
 Row counts alone would pass a month where revenue was loaded twice or one product disappeared — the KPI totals and drift checks catch those.
-
-### Performance notes
-
-The inputs are the full monthly subscriber snapshot plus daily prepaid revenue, postpaid invoices and VAS purchases, so most of the work is keeping joins local and small.
-
-- **Segment on the join keys.** The subscriber-level temp tables in 01 are `SEGMENTED BY HASH(MNTH_ID, PROD_KEY)` and joined on those two columns, so matching rows sit on the same node and those joins need no redistribution. This only holds when **both** sides use the same segmentation: 02 segments `TEMP_SUB_DIM_PROD_KPI` by `(VC_PAR_KEY, PROD_KEY)` but joins it on `PROD_KEY` only, so Vertica has to resegment it; segmenting it by `PROD_KEY` would keep that join local. `EXPLAIN` shows which joins still move data.
-- **Reduce before joining.** Daily revenue and VAS facts are filtered to the run month and aggregated to one row per subscriber *before* they meet the profile; joins happen at subscriber grain, not daily-transaction grain.
-- **Make the join keys unique first.** Lookup tables are de-duplicated (`SELECT DISTINCT`, `ROW_NUMBER() … RN = 1`) before joining, which prevents join explosion — e.g. the partner dimension keeps one row per partner (`RN = 1`) before the effective-date join.
-- **Join on plain keys, not expressions.** In 04 the before/after revenue joins compared `TO_DATE(CAST(MNTH_ID …))` on every revenue row; they now join on integer month keys computed once per subscriber.
-- **Check the plan.** `EXPLAIN` before running a new heavy query: look for `RESEGMENT` / `BROADCAST` on large inputs (wrong segmentation) and for row estimates that grow after a join (non-unique key).
-
-### What I would do differently next time
-- **Long-format cohort table.** Store `(cohort_month, subscriber, month_offset, …)` instead of 60 wide columns plus 11 `UPDATE` statements. It is simpler to load and easier to extend beyond 12 months. Switch the report over with a parallel run that compares the old and new tables cell by cell before retiring the wide one.
-- **Fix the revenue double count in 02.** Revenue is `SUM`med over every profile row of a subscriber, so a subscriber duplicated in the profile is counted twice; de-duplicate the profile (or take `MAX`) before the join.
-- **Measure, not just reason about, performance** — record runtime and `EXPLAIN` before/after for the 04 join change.
-- **Consolidate repeated `UNION ALL` report blocks** into a single join with unpivoted product flags.
 
 ---
 
@@ -208,7 +196,7 @@ The inputs are the full monthly subscriber snapshot plus daily prepaid revenue, 
     ├── 02_survival_cohort.sql
     ├── 03_monthly_report_export.sql
     ├── 04_first_ott_churn_deep_dive.sql
-    └── dq_checks.sql                # data-quality checks per month
+    └── dq_checks.sql                # post-validation checks per month
 ```
 
 **Tools:** SQL (Vertica, Netezza) · Excel · PowerPoint
